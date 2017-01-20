@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+#-*- coding: utf-8 -*-
+###############################################################################
+#									      #
+#                         (C) 2016 Alex Mirtoff				      #
+#                        e-mail: alex@mirtoff.ru		              #
+#									      #
+###############################################################################
+
+import sys, os
+import re
+import subprocess
+
+
+
+# ВНИМАНИЕ! СНАЧАЛА ПРОБУЙ НА КОНФИГАХ В /nag ДИРЕКТОРИИ.
+# ТОЛЬКО ПОЛНОСТЬЮ УБЕДИВШИСЬ, ЧТО СКРИПТ ОТРАБАТЫВАЕТ ПРАВИЛЬНО - МЕНЯЙ ПУТЬ НА БОЕВЫЕ КОНФИГИ!
+# В ЛЮБОМ СЛУЧАЕ, ПЕРЕД НАЧАЛОМ РАБОТЫ СКРИПТА СКОПИРУЙ В НАДЕЖНОЕ МЕСТО БОЕВЫЕ КОНФИГИ.
+nagios_dir = '/home/nagios-script/nag/'
+#nagios_dir = '/usr/local/etc/nagios/switches/'
+
+# Какую проверку конфигов запускать, боевую или нет:
+nagios_check_str = 'sudo /usr/local/bin/nagios -v /home/nagios-script/test.cfg'
+#nagios_check_str = 'sudo /usr/local/bin/nagios -v /usr/local/etc/nagios/nagios.cfg'
+
+if len(sys.argv) < 3:
+	print('\nСинтаксис: sudo address <имя из нагиоса> \'<новое имя>\'')
+	print('ВНИМАНИЕ! Нужно взять новое имя хоста в кавычки\n')
+	print('Например: sudo address -50L-23_2M \'-50 лет ВЛКСМ 23/2_М 1п 9э л/м\'\n')
+	exit()
+
+original_name = sys.argv[1]
+new_name = sys.argv[2]
+
+if re.search(r'[,.;\'`:~%^<>!|]', new_name) is not None:
+	exit('''\nВы ввели недопустимые символы \n''')
+
+if re.search(r'_', new_name) is None:
+	exit('''\nОтсутствует разделитель _ (подчеркивание)\n''')
+
+host_name_regexp = '(host_name\s*[^-]'+original_name+')'
+parent_regexp = '(parents\s*[^-]'+original_name+')'
+
+#host_name_regexp = original_name
+#parent_regexp = original_name
+
+nagios_all_files = os.listdir(nagios_dir)
+only_cfg_files = filter(lambda x: x.endswith('.cfg'), nagios_all_files)
+cfg_count = len(only_cfg_files)
+loop_count = 0 
+match_count = 0
+match_files_list = []
+
+def stupid_man(check_new_host, nagios_str_read):
+	if re.search(check_new_host, nagios_str_read):
+		exit('''\nВы уже давали такое новое имя, будьте внимательнее.\nИНЖЕНЕР, не расстраивай меня :(\n''')
+
+while loop_count < cfg_count:
+	nagios_file = open(nagios_dir+only_cfg_files[loop_count], 'r')
+	nagios_file_str = nagios_file.read()
+#	stupid_man(new_name, nagios_file_str)
+	if re.search(host_name_regexp, nagios_file_str) or re.search(parent_regexp, nagios_file_str) is not None:
+		match_host_check = re.findall(host_name_regexp, nagios_file_str)
+	        match_parent_check = re.findall(parent_regexp, nagios_file_str)
+		match_count += len(match_host_check)
+		match_count += len(match_parent_check)
+		match_files_list.append(only_cfg_files[loop_count])
+		new_name.rstrip()
+		replaced_first = re.sub(host_name_regexp, 'host_name\\t'+new_name, nagios_file_str)
+		replaced_last = re.sub(parent_regexp, 'parents\\t'+new_name, replaced_first)
+		nagios_file.close()
+		write_result = open(nagios_dir+only_cfg_files[loop_count], 'w')
+	        write_result.write(replaced_last)
+	        write_result.close()
+	loop_count += 1
+
+if match_count > 0:
+	print '\n---------------------------------------------------------------------------------'
+	print '\n*** Найдены совпадения в следующих файлах: \n'
+	for x in match_files_list:
+		print '    >>> '+x
+	print '\n*** Всего '+str(match_count)+' совпадений\n'
+	print 'Исправлено: '+original_name+' на '+new_name+'\n'
+	print '---------------------------------------------------------------------------------\n'
+	print 'Запускаю проверку измененных файлов на ошибки: \n'
+	check_config_cmd=subprocess.Popen(nagios_check_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+	on_display = check_config_cmd.stdout.read()
+	warnings_regexp = re.findall('(Total Warnings:\s*\d*)', on_display)
+	errors_regexp = re.findall('(Total Errors:\s*\d*)', on_display)
+	print warnings_regexp[0]
+	print errors_regexp[0]+'\n'
+	print '---------------------------------------------------------------------------------\n'
+else:
+	print '\nСовпадений не найдено\n'
+
